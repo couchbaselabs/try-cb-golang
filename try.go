@@ -88,8 +88,6 @@ func (u *UserIntermediary) CreateUser() bool{
 	newUser.Password = u.Password
 	newUser.Token = u.Token
 	if _, err := bucket.Insert(newUser.Name, newUser, 0); err != nil{
-			fmt.Println("here we didnt:",err)
-			fmt.Printf("%+v",newUser)
 			return false
 	}
 	return true
@@ -115,34 +113,11 @@ func (u *UserIntermediary) CheckUserExists() bool{
 	return true
 }
 
-func main() {
-	cluster, _ := gocb.Connect("couchbase://127.0.0.1")
-	bucket, _ = cluster.OpenBucket("travel-sample","")
-
-	http.Handle("/", http.FileServer(http.Dir("./static")))
-	http.HandleFunc("/api/airport/findAll", airportHandler)
-	http.HandleFunc("/api/flightPath/findAll",flightPathHandler)
-	http.HandleFunc("/api/user/login",loginHandler)
-	fmt.Printf("Starting server on :3000\n")
-	http.ListenAndServe(":3000",nil)
-}
-
-/*
-
-	GET  /api/airport/findall
-	GET /api/flightPath/findAll
-	POST /api/user/login
-	GET /api/user/login
-	POST /api/user/flights
-	GET /api/user/flights
-*/
 func airportHandler(w http.ResponseWriter, r *http.Request) {
-//search
-//token
-	search := r.URL.Query().Get("search")
-	//token := "raybob"
+
 	var queryPrep string
-	switch len(search) {
+
+	switch search := r.URL.Query().Get("search"); len(search) {
 	case 3:
 		queryPrep = "SELECT airportname FROM `travel-sample` WHERE faa ='" + strings.ToUpper(search) + "'"
 	case 4:
@@ -172,9 +147,8 @@ func flightPathHandler(w http.ResponseWriter, r *http.Request) {
 
 	var queryPrep, queryTo, queryFrom string
 	var fromLon, fromLat, toLon, toLat, dist float64
-	var price, flightTime int
+	var price, flightTime, weekday int
 	var leave time.Time
-	var weekday int
 	var row AirportIntermediary
 	var airports []AirportIntermediary
 	var flight Flight
@@ -230,39 +204,45 @@ func flightPathHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func Haversine(lonFrom float64, latFrom float64, lonTo float64, latTo float64) (distance float64) {
+
 	var deltaLat = (latTo - latFrom) * (math.Pi / 180)
 	var deltaLon = (lonTo - lonFrom) * (math.Pi / 180)
-
 	var a = math.Sin(deltaLat / 2) * math.Sin(deltaLat / 2) +
 		math.Cos(latFrom * (math.Pi / 180)) * math.Cos(latTo * (math.Pi / 180)) *
 		math.Sin(deltaLon / 2) * math.Sin(deltaLon / 2)
 	var c = 2 * math.Atan2(math.Sqrt(a),math.Sqrt(1-a))
-
 	distance = earthRadius * c
-
 	return
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
+
 	var q UserIntermediary
+	var s struct {
+		Success string `json:"success"`
+	}
 
 	switch r.Method {
 		case "GET":
+			// login request for existing user
 			q.User = r.URL.Query().Get("user")
 			q.Password = r.URL.Query().Get("password")
+			if authenticated:=q.LoginUser(); authenticated==true{
+				s.Success=q.Token
+				bytes,_:=json.Marshal(s)
+				w.Write(bytes)
+			}else{
+				bytes:=[]byte(`{"failure":"Bad Username or Password"}`)
+				w.Write(bytes)
+			}
 		case "POST":
+			// login request for a new user
 			_ = json.NewDecoder(r.Body).Decode(&q)
-			// check if user exists
 			if exists := q.CheckUserExists(); exists == true {
-				// user exists
 				bytes:=[]byte(`{"failure":"User exists, please choose a different username"}`)
 				w.Write(bytes)
 			}
 			if created := q.CreateUser(); created == true {
-				// user created
-				var s struct {
-					Success string `json:"success"`
-				}
 				s.Success=q.Token
 				bytes,_:=json.Marshal(s)
 				w.Write(bytes)
@@ -270,6 +250,27 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 }
 
+func main() {
+	cluster, _ := gocb.Connect("couchbase://127.0.0.1")
+	bucket, _ = cluster.OpenBucket("travel-sample","")
+
+	http.Handle("/", http.FileServer(http.Dir("./static")))
+	http.HandleFunc("/api/airport/findAll", airportHandler)
+	http.HandleFunc("/api/flightPath/findAll",flightPathHandler)
+	http.HandleFunc("/api/user/login",loginHandler)
+	fmt.Printf("Starting server on :3000\n")
+	http.ListenAndServe(":3000",nil)
+}
+
+/*
+
+	GET  /api/airport/findall
+	GET /api/flightPath/findAll
+	POST /api/user/login
+	GET /api/user/login
+	POST /api/user/flights
+	GET /api/user/flights
+*/
 
 /*
 func userFlightsHandler(w http.ResponseWriter, r *http.Request) {
