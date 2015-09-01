@@ -9,6 +9,7 @@ import (
 	"strings"
 	"strconv"
 	"math"
+	"errors"
   jwt "github.com/dgrijalva/jwt-go"
 
 )
@@ -54,22 +55,54 @@ type User struct {
 	Name string `json:"name"`
 	Password string `json:"password"`
 	Token string `json:"token"`
-	Flights []struct {
-		Type string `json:"_type"`
-		ID string `json:"_id"`
-		Name string `json:"name"`
-		Flight string `json:"flight"`
-		Date string `json:"date"`
-		Sourceairport string `json:"sourceairport"`
-		Destinationairport string `json:"destinationairport"`
-		Bookedon string `json:"bookedon"`
-	} `json:"flights"`
+	Flights []UserFlight `json:"flights"`
+}
+
+type UserFlight struct{
+	Type string `json:"_type"`
+	ID string `json:"_id"`
+	Name string `json:"name"`
+	Flight string `json:"flight"`
+	Date string `json:"date"`
+	Sourceairport string `json:"sourceairport"`
+	Destinationairport string `json:"destinationairport"`
+	Bookedon string `json:"bookedon"`
+}
+
+type InternalFlight struct{
+	ID string `json:"_id"`
+	Name string `json:"_name"`
+	Price int `json:"_price"`
+	Quantity int `json:"_quantity"`
+	Data UserFlight `json:"_data"`
 }
 
 type UserIntermediary struct{
 	User string `json:"user"`
 	Password string `json:"password"`
 	Token	string `json:"token"`
+}
+
+func LoadUserFromToken(myToken string) (*User, error) {
+	var u User
+	token,_:=jwt.Parse(myToken, func(token *jwt.Token) (interface{}, error) {
+    return hashToken, nil
+	})
+	//if err != nil {
+	//	fmt.Println("TOKEN", token, err)
+	//	return nil, errors.New("Token Parsing Problem")
+	//}
+	if _,err := bucket.Get(token.Claims["user"].(string),&u); err != nil{
+		return nil, errors.New("User Loading Error")
+	}
+	return &u, nil
+}
+
+func (u *User) Save() bool{
+	if _, err := bucket.Upsert(u.Name, u, 0); err != nil{
+			return false
+	}
+	return true
 }
 
 func (u *UserIntermediary) CreateUser() bool{
@@ -250,6 +283,47 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		}
 }
 
+func userFlightsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+		case "GET":
+			token := r.URL.Query().Get("token")
+			if t, err := LoadUserFromToken(token); err != nil{
+				fmt.Println("ERROR", err)
+				} else {
+					bytes,_:=json.Marshal(t.Flights)
+					w.Write(bytes)
+			}
+		case "POST":
+			var t *User
+			var n UserFlight
+			var err error
+			var i int
+			var f struct{
+				Token string `json:"token"`
+				Flights []InternalFlight `json:"flights"`
+			}
+			var s struct {
+				Added int `json:"added"`
+			}
+			u := time.Now()
+			_ = json.NewDecoder(r.Body).Decode(&f)
+			if t, err = LoadUserFromToken(f.Token); err!=nil{
+				fmt.Println("ERROR",err)
+			}
+			for i=0;i< len(f.Flights);i++ {
+				n = f.Flights[i].Data
+				n.Bookedon=u.Format(time.RFC3339)
+				t.Flights=append(t.Flights,n)
+			}
+			if created:=t.Save(); created==true{
+				s.Added=i
+				bytes,_:=json.Marshal(s)
+				w.Write(bytes)
+			}
+		default:
+		}
+}
+
 func main() {
 	cluster, _ := gocb.Connect("couchbase://127.0.0.1")
 	bucket, _ = cluster.OpenBucket("travel-sample","")
@@ -258,27 +332,7 @@ func main() {
 	http.HandleFunc("/api/airport/findAll", airportHandler)
 	http.HandleFunc("/api/flightPath/findAll",flightPathHandler)
 	http.HandleFunc("/api/user/login",loginHandler)
+	http.HandleFunc("/api/user/flights",userFlightsHandler)
 	fmt.Printf("Starting server on :3000\n")
 	http.ListenAndServe(":3000",nil)
 }
-
-/*
-
-	GET  /api/airport/findall
-	GET /api/flightPath/findAll
-	POST /api/user/login
-	GET /api/user/login
-	POST /api/user/flights
-	GET /api/user/flights
-*/
-
-/*
-func userFlightsHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-		case "GET":
-
-		case "POST":
-
-	}
-
-	*/
