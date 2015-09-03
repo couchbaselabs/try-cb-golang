@@ -40,11 +40,11 @@ travelApp.run(function($rootScope, $state, $cookies) {
     $rootScope.publishMessage = function(message) {
         $rootScope.textAreaShowMe = message + "\n" + ($rootScope.textAreaShowMe ? $rootScope.textAreaShowMe : "");
     };
-    //fayeClient = new Faye.Client("http://" + window.location.hostname + ":8000" + "/faye");
+    fayeClient = new Faye.Client("http://" + window.location.hostname + ":8000" + "/faye",{timeout:30});
     if($cookies.get("user")) {
-        //var subscription = fayeClient.subscribe("/" + $cookies.get("user"), function(message) {
-        //    $rootScope.publishMessage(message.text);
-        //});
+        var subscription = fayeClient.subscribe("/" + $cookies.get("user"), function(message) {
+            $rootScope.publishMessage(message.text);
+        });
         $state.go("home");
     } else {
         $state.go("login");
@@ -71,9 +71,9 @@ travelApp.controller("LoginController", function($scope, $rootScope, $state, $ht
                     $scope.formData.error = null;
                     $cookies.put('token',response.data.success, {"expires": cookieExpiration});
                     $cookies.put('user',jwtHelper.decodeToken(response.data.success).user, {"expires": cookieExpiration});
-                    // var subscription = fayeClient.subscribe("/" + $cookies.get("user"), function(message) {
-                    //    $rootScope.publishMessage(message.text);
-                    // });
+                    var subscription = fayeClient.subscribe("/" + $cookies.get("user"), function(message) {
+                        $rootScope.publishMessage(message.text);
+                    });
                     $state.go("home");
                 }
                 if(response.data.failure) {
@@ -97,9 +97,9 @@ travelApp.controller("LoginController", function($scope, $rootScope, $state, $ht
                     $scope.formData.error=null;
                     $cookies.put('token',response.data.success, {"expires": cookieExpiration});
                     $cookies.put('user',jwtHelper.decodeToken(response.data.success).user, {"expires": cookieExpiration});
-                    // var subscription = fayeClient.subscribe("/" + $cookies.get("user"), function(message) {
-                    //    $rootScope.publishMessage(message.text);
-                    // });
+                    var subscription = fayeClient.subscribe("/" + $cookies.get("user"), function(message) {
+                        $rootScope.publishMessage(message.text);
+                    });
                     $state.go("home");
                 }
                 if(response.data.failure) {
@@ -181,7 +181,7 @@ travelApp.controller("HomeController", function($scope, $rootScope, $state, $htt
                     $scope.retEmpty = false;
                 }
                 for (var j = 0; j < responseRet.data.length; j++) {
-                    var d= new Date(Date.parse($scope.ret + " " + responseRet.data[j].utc));
+                    var d= new Date(Date.parse($scope.returnDate + " " + responseRet.data[j].utc));
                     d.setHours(d.getHours()+responseRet.data[j].flighttime);
                     responseRet.data[j].utcland = d.getHours() + ":" + d.getMinutes() + ":00";
                     $scope.rowCollectionRet.push(responseRet.data[j]);

@@ -16,12 +16,14 @@ import (
 
 // bucket reference
 var bucket *gocb.Bucket
-const kmtomiles = float64(0.621371192)
-const earthRadius = float64(6371)
-const distanceCostMultiplier = float64(0.1)
-const averageKilometersHour = float64(800)
-const layout = "01/02/2006"
-const hashToken = "UNSECURE_SECRET_TOKEN"
+const (
+	kmtomiles = float64(0.621371192)
+ 	earthRadius = float64(6371)
+	distanceCostMultiplier = float64(0.1)
+	averageKilometersHour = float64(800)
+	layout = "01/02/2006"
+	hashToken = "UNSECURE_SECRET_TOKEN"
+)
 
 type Airport struct {
 	Airportname string `json:"airportname"`
@@ -325,9 +327,11 @@ func userFlightsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// Cluster connection and bucket for couchbase
 	cluster, _ := gocb.Connect("couchbase://127.0.0.1")
 	bucket, _ = cluster.OpenBucket("travel-sample","")
 
+	// Http Routing
 	http.Handle("/", http.FileServer(http.Dir("./static")))
 	http.HandleFunc("/api/airport/findAll", airportHandler)
 	http.HandleFunc("/api/flightPath/findAll",flightPathHandler)
