@@ -157,7 +157,7 @@ func airportHandler(w http.ResponseWriter, r *http.Request) {
 		queryPrep = "SELECT airportname FROM `travel-sample` WHERE faa ='" + strings.ToUpper(search) + "'"
 	case 4:
 		if s:=strings.ToUpper(search); s==search {
-			queryPrep = "SELECT airportname FROM `travel-sample` WHERE faa ='" + strings.ToUpper(search) + "'"
+			queryPrep = "SELECT airportname FROM `travel-sample` WHERE icao ='" + strings.ToUpper(search) + "'"
 		}else{
 			queryPrep = "SELECT airportname FROM `travel-sample` WHERE airportname like '" + search + "%'"
 		}
