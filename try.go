@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/couchbaselabs/gocb"
+	"github.com/couchbase/gocb"
 	"fmt"
 	"time"
 	"encoding/json"
@@ -166,7 +166,10 @@ func airportHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	myQuery := gocb.NewN1qlQuery(queryPrep)
-	rows := bucket.ExecuteN1qlQuery(myQuery,nil)
+	rows,err := bucket.ExecuteN1qlQuery(myQuery,nil)
+	if err!=nil{
+		fmt.Println("ERROR EXECUTING N1QL QUERY:",err)
+	}
 
 	var airports []Airport
 	var row Airport
@@ -199,7 +202,10 @@ func flightPathHandler(w http.ResponseWriter, r *http.Request) {
 	        "' UNION SELECT faa as toAirport,geo FROM `travel-sample` WHERE airportname = '" + to + "'"
 
 	myQuery := gocb.NewN1qlQuery(queryPrep)
-	rows := bucket.ExecuteN1qlQuery(myQuery,nil)
+	rows,err := bucket.ExecuteN1qlQuery(myQuery,nil)
+	if err!=nil{
+		fmt.Println("ERROR EXECUTING N1QL QUERY:",err)
+	}
 
 	for rows.Next(&row) {
 		airports = append(airports,row)
@@ -226,7 +232,10 @@ func flightPathHandler(w http.ResponseWriter, r *http.Request) {
 						queryFrom + "' AND r.destinationairport='" + queryTo + "' AND s.day=" + strconv.Itoa(weekday) + " ORDER BY a.name"
 
 	myQuery = gocb.NewN1qlQuery(queryPrep)
-	rows = bucket.ExecuteN1qlQuery(myQuery,nil)
+	rows,err = bucket.ExecuteN1qlQuery(myQuery,nil)
+	if err!=nil{
+		fmt.Println("ERROR EXECUTING N1QL QUERY:",err)
+	}
 
 	for i:=0; rows.Next(&flight);i++ {
 		flight.Flighttime=flightTime
