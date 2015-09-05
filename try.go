@@ -176,10 +176,10 @@ func airportHandler(w http.ResponseWriter, r *http.Request) {
 	for rows.Next(&row){
 		airports=append(airports,row)
 	}
+	_ = rows.Close()
 	bytes,_:=json.Marshal(airports)
 	w.Write(bytes)
 }
-
 
 func flightPathHandler(w http.ResponseWriter, r *http.Request) {
 
