@@ -1,61 +1,65 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/couchbase/gocb"
-	"net/http"
-	"encoding/json"
+	"github.com/couchbase/gocb/cbft"
 	"github.com/dgrijalva/jwt-go"
-	"errors"
 	"github.com/gorilla/mux"
-	"strings"
-	"time"
 	"math"
 	"math/rand"
+	"net/http"
+	"os/user"
 	"strconv"
-	"github.com/couchbase/gocb/cbft"
+	"strings"
+	"time"
 )
 
 var (
-	jwtSecret = []byte("UNSECURE_SECRET_TOKEN")
+	cbConnStr  = "couchbase://localhost"
+	cbBucket   = "travel-sample"
+	cbPassword = ""
+	jwtSecret  = []byte("UNSECURE_SECRET_TOKEN")
 )
 
 var (
-	ErrUserExists = errors.New("user already exists")
-	ErrUserNotFound = errors.New("user does not exist")
-	ErrBadPassword = errors.New("password does not match")
+	ErrUserExists    = errors.New("user already exists")
+	ErrUserNotFound  = errors.New("user does not exist")
+	ErrBadPassword   = errors.New("password does not match")
 	ErrBadAuthHeader = errors.New("bad authentication header format")
-	ErrBadAuth = errors.New("invalid auth token")
+	ErrBadAuth       = errors.New("invalid auth token")
 )
 
 var globalCluster *gocb.Cluster = nil
 var globalBucket *gocb.Bucket = nil
 
 type jsonBookedFlight struct {
-	Name string `json:"name"`
-	Flight string `json:"flight"`
-	Price float64 `json:"price"`
-	Date string `json:"date"`
-	SourceAirport string `json:"sourceairport"`
-	DestinationAirport string `json:"destinationairport"`
-	BookedOn string `json:"bookedon"`
+	Name               string  `json:"name"`
+	Flight             string  `json:"flight"`
+	Price              float64 `json:"price"`
+	Date               string  `json:"date"`
+	SourceAirport      string  `json:"sourceairport"`
+	DestinationAirport string  `json:"destinationairport"`
+	BookedOn           string  `json:"bookedon"`
 }
 
 type jsonUser struct {
-	Name string `json:"name"`
-	Password string `json:"password"`
-	Flights []jsonBookedFlight `json:"flights"`
+	Name     string             `json:"name"`
+	Password string             `json:"password"`
+	Flights  []jsonBookedFlight `json:"flights"`
 }
 
 type jsonFlight struct {
-	Name string `json:"name"`
-	Flight string `json:"flight"`
-	Equipment string `json:"equipment"`
-	Utc string `json:"utc"`
-	SourceAirport string `json:"sourceairport"`
-	DestinationAirport string `json:"destinationairport"`
-	Price float64 `json:"price"`
-	FlightTime int `json:"flighttime"`
+	Name               string  `json:"name"`
+	Flight             string  `json:"flight"`
+	Equipment          string  `json:"equipment"`
+	Utc                string  `json:"utc"`
+	SourceAirport      string  `json:"sourceairport"`
+	DestinationAirport string  `json:"destinationairport"`
+	Price              float64 `json:"price"`
+	FlightTime         int     `json:"flighttime"`
 }
 
 type jsonAirport struct {
@@ -63,14 +67,13 @@ type jsonAirport struct {
 }
 
 type jsonHotel struct {
-	Country string `json:"country"`
-	City string `json:"city"`
-	State string `json:"state"`
-	Address string `json:"address"`
-	Name string `json:"name"`
+	Country     string `json:"country"`
+	City        string `json:"city"`
+	State       string `json:"state"`
+	Address     string `json:"address"`
+	Name        string `json:"name"`
 	Description string `json:"description"`
 }
-
 
 type jsonContext []string
 
@@ -78,13 +81,12 @@ func (c *jsonContext) Add(msg string) {
 	*c = append(*c, msg)
 }
 
-
 type jsonFailure struct {
 	Failure string `json:"failure"`
 }
 
 func writeJsonFailure(w http.ResponseWriter, code int, err error) {
-	failObj := jsonFailure {
+	failObj := jsonFailure{
 		Failure: err.Error(),
 	}
 
@@ -118,7 +120,6 @@ func createJwtToken(user string) (string, error) {
 		"user": user,
 	}).SignedString(jwtSecret)
 }
-
 
 type AuthedUser struct {
 	Name string
@@ -157,12 +158,10 @@ func decodeAuthUserOrFail(w http.ResponseWriter, req *http.Request, user *Authed
 	return true
 }
 
-
-
 // GET /api/airports?search=xxx
 type jsonAirportSearchResp struct {
-	Data []jsonAirport `json:"data"`
-	Context jsonContext `json:"context"`
+	Data    []jsonAirport `json:"data"`
+	Context jsonContext   `json:"context"`
 }
 
 func AirportSearch(w http.ResponseWriter, req *http.Request) {
@@ -181,7 +180,7 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 
 	respData.Context.Add(queryStr)
 	q := gocb.NewN1qlQuery(queryStr)
-	rows, err := globalBucket.ExecuteN1qlQuery(q,nil)
+	rows, err := globalBucket.ExecuteN1qlQuery(q, nil)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -197,11 +196,10 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 	encodeRespOrFail(w, respData)
 }
 
-
 // GET /api/flightPaths/{from}/{to}?leave=mm/dd/YYYY
 type jsonFlightSearchResp struct {
-	Data []jsonFlight `json:"data"`
-	Context jsonContext `json:"context"`
+	Data    []jsonFlight `json:"data"`
+	Context jsonContext  `json:"context"`
 }
 
 func FlightSearch(w http.ResponseWriter, req *http.Request) {
@@ -221,8 +219,8 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 	var queryStr string
 	queryStr =
 		"SELECT faa FROM `travel-sample` WHERE airportname='" + fromAirport + "'" +
-		" UNION" +
-		" SELECT faa FROM `travel-sample` WHERE airportname='" + toAirport + "'"
+			" UNION" +
+			" SELECT faa FROM `travel-sample` WHERE airportname='" + toAirport + "'"
 
 	respData.Context.Add(queryStr)
 	q := gocb.NewN1qlQuery(queryStr)
@@ -251,13 +249,13 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 
 	queryStr =
 		"SELECT a.name, s.flight, s.utc, r.sourceairport, r.destinationairport, r.equipment" +
-		" FROM `travel-sample` AS r" +
-		" UNNEST r.schedule AS s" +
-		" JOIN `travel-sample` AS a ON KEYS r.airlineid" +
-		" WHERE r.sourceairport = '" + toAirportFaa + "'" +
-		" AND r.destinationairport = '" + fromAirportFaa + "'" +
-		" AND s.day=" + strconv.Itoa(dayOfWeek) +
-		" ORDER BY a.name ASC;"
+			" FROM `travel-sample` AS r" +
+			" UNNEST r.schedule AS s" +
+			" JOIN `travel-sample` AS a ON KEYS r.airlineid" +
+			" WHERE r.sourceairport = '" + toAirportFaa + "'" +
+			" AND r.destinationairport = '" + fromAirportFaa + "'" +
+			" AND s.day=" + strconv.Itoa(dayOfWeek) +
+			" ORDER BY a.name ASC;"
 
 	respData.Context.Add(queryStr)
 	q = gocb.NewN1qlQuery(queryStr)
@@ -271,7 +269,7 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 	var flight jsonFlight
 	for rows.Next(&flight) {
 		flight.FlightTime = int(math.Ceil(rand.Float64() * 8000))
-		flight.Price = math.Ceil(float64(flight.FlightTime) / 8 * 100) / 100
+		flight.Price = math.Ceil(float64(flight.FlightTime)/8*100) / 100
 		respData.Data = append(respData.Data, flight)
 		flight = jsonFlight{}
 	}
@@ -279,10 +277,9 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 	encodeRespOrFail(w, respData)
 }
 
-
 // POST /api/user/login
 type jsonUserLoginReq struct {
-	User string `json:"user"`
+	User     string `json:"user"`
 	Password string `json:"password"`
 }
 
@@ -301,8 +298,7 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	}
 
 	userKey := fmt.Sprintf("user::%s", reqData.User)
-	var user jsonUser
-	_, err := globalBucket.Get(userKey, &user)
+	passRes, err := globalBucket.LookupIn(userKey).Get("password").Execute()
 	if err == gocb.ErrKeyExists {
 		writeJsonFailure(w, 401, ErrUserNotFound)
 		return
@@ -311,12 +307,19 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if user.Password != reqData.Password {
+	var password string
+	err = passRes.Content("password", &password)
+	if err != nil {
+		writeJsonFailure(w, 500, err)
+		return
+	}
+
+	if password != reqData.Password {
 		writeJsonFailure(w, 401, ErrBadPassword)
 		return
 	}
 
-	token, err := createJwtToken(user.Name)
+	token, err := createJwtToken(reqData.User)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -327,10 +330,9 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	encodeRespOrFail(w, respData)
 }
 
-
 //POST /api/user/signup
 type jsonUserSignupReq struct {
-	User string `json:"user"`
+	User     string `json:"user"`
 	Password string `json:"password"`
 }
 
@@ -349,10 +351,10 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 	}
 
 	userKey := fmt.Sprintf("user::%s", reqData.User)
-	user := jsonUser {
-		Name: reqData.User,
+	user := jsonUser{
+		Name:     reqData.User,
 		Password: reqData.Password,
-		Flights: nil,
+		Flights:  nil,
 	}
 	_, err := globalBucket.Insert(userKey, user, 0)
 	if err == gocb.ErrKeyExists {
@@ -374,11 +376,10 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 	encodeRespOrFail(w, respData)
 }
 
-
 // GET /api/user/{username}/flights
 type jsonUserFlightsResp struct {
-	Data []jsonBookedFlight `json:"data"`
-	Context jsonContext `json:"context"`
+	Data    []jsonBookedFlight `json:"data"`
+	Context jsonContext        `json:"context"`
 }
 
 func UserFlights(w http.ResponseWriter, req *http.Request) {
@@ -402,7 +403,6 @@ func UserFlights(w http.ResponseWriter, req *http.Request) {
 	encodeRespOrFail(w, respData)
 }
 
-
 //POST  /api/user/{username}/flights
 type jsonUserBookFlightReq struct {
 	Flights []jsonBookedFlight `json:"flights"`
@@ -414,7 +414,6 @@ type jsonUserBookFlightResp struct {
 	} `json:"data"`
 	Context jsonContext `json:"context"`
 }
-
 
 func UserBookFlight(w http.ResponseWriter, req *http.Request) {
 	var respData jsonUserBookFlightResp
@@ -454,10 +453,9 @@ func UserBookFlight(w http.ResponseWriter, req *http.Request) {
 	encodeRespOrFail(w, respData)
 }
 
-
 // GET /api/hotel/{description}/{location}
 type jsonHotelSearchResp struct {
-	Data []jsonHotel `json:"data"`
+	Data    []jsonHotel `json:"data"`
 	Context jsonContext `json:"context"`
 }
 
@@ -523,12 +521,12 @@ func main() {
 	var err error
 
 	// Connect to Couchbase
-	globalCluster, err = gocb.Connect("couchbase://localhost")
+	globalCluster, err = gocb.Connect(cbConnStr)
 	if err != nil {
 		panic(err)
 	}
 
-	globalBucket, err = globalCluster.OpenBucket("travel-sample", "")
+	globalBucket, err = globalCluster.OpenBucket(cbBucket, cbPassword)
 	if err != nil {
 		panic(err)
 	}
