@@ -12,19 +12,19 @@ previously populated database.  You additionally can use Full-Text Search to per
 The steps below assume you are running a standalone couchbase instance running kv, indexing, fts (in Couchbase 4.5 or
 later) and query services on the same server where the node application will also be running.
 
- - [1] Install a Couchbase Server, and start it.
+ 1. Install a Couchbase Server, and start it.
 
- - [2] Install Go 1.6+
+ 2. Install Go 1.6+
 
- - [3] Make a GOPATH directory and then use `go get` to fetch this repo.  From a terminal:
+ 3. Make a GOPATH directory and then use `go get` to fetch this repo.  From a terminal:
 
     **go get -u "github.com/couchbaselabs/try-cb-golang"**
 
- - [4] Start the application.  From a terminal:
+ 4. Start the application.  From a terminal:
 
     **go run main.go**
 
- - [5] Open a browser and load the url http://localhost:8080
+ 5. Open a browser and load the url http://localhost:8080
 
 ## REST API DOCUMENTATION
 The REST API for this example application can be found at:
