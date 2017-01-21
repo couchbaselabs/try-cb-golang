@@ -11,7 +11,6 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
-	"os/user"
 	"strconv"
 	"strings"
 	"time"
