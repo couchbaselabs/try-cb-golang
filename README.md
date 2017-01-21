@@ -22,7 +22,7 @@ later) and query services on the same server where the node application will als
 
  4. Start the application.  From a terminal:
 
-    **go run main.go**
+    **go run github.com/couchbaselabs/try-cb-golang/main.go**
 
  5. Open a browser and load the url http://localhost:8080
 
