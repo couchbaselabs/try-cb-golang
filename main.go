@@ -540,6 +540,7 @@ func main() {
 	r.Path("/api/user/signup").Methods("POST").HandlerFunc(UserSignup)
 	r.Path("/api/user/{username}/flights").Methods("GET").HandlerFunc(UserFlights)
 	r.Path("/api/user/{username}/flights").Methods("POST").HandlerFunc(UserBookFlight)
+	r.Path("/api/hotel/{description}/").Methods("GET").HandlerFunc(HotelSearch)
 	r.Path("/api/hotel/{description}/{location}/").Methods("GET").HandlerFunc(HotelSearch)
 
 	// Serve our public files out of root
