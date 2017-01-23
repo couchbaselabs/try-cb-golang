@@ -491,6 +491,7 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	respData.Data = []jsonHotel{}
 	for _, hit := range rows.Hits() {
 		res, _ := globalBucket.LookupIn(hit.Id).
 			Get("country").
