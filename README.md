@@ -18,11 +18,16 @@ later) and query services on the same server where the node application will als
 
  3. Make a GOPATH directory and then use `go get` to fetch this repo.  From a terminal:
 
-    **go get -u "github.com/couchbaselabs/try-cb-golang"**
+ ```bash
+ go get -u "github.com/couchbaselabs/try-cb-golang"
+ ```
 
  4. Start the application.  From a terminal:
 
-    **go run github.com/couchbaselabs/try-cb-golang/main.go**
+ ```bash
+ cd src/github.com/couchbaselabs/try-cb-golang/
+ go run main.go
+ ```
 
  5. Open a browser and load the url http://localhost:8080
 
