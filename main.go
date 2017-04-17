@@ -125,7 +125,7 @@ type AuthedUser struct {
 }
 
 func decodeAuthUserOrFail(w http.ResponseWriter, req *http.Request, user *AuthedUser) bool {
-	authHeader := req.Header.Get("Authentication")
+	authHeader := req.Header.Get("Authorization")
 	authHeaderParts := strings.SplitN(authHeader, " ", 2)
 	if authHeaderParts[0] != "Bearer" {
 		writeJsonFailure(w, 400, ErrBadAuthHeader)
