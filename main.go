@@ -526,6 +526,13 @@ func main() {
 		panic(err)
 	}
 
+	// Authenticate to the cluster using RBAC (Couchbase Server 5.0+)
+	globalCluster.Authenticate(gocb.PasswordAuthenticator{
+		"Administrator",
+		"password",
+	})
+
+	// Open the bucket
 	globalBucket, err = globalCluster.OpenBucket(cbBucket, cbPassword)
 	if err != nil {
 		panic(err)
