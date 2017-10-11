@@ -19,7 +19,8 @@ import (
 var (
 	cbConnStr  = "couchbase://localhost"
 	cbBucket   = "travel-sample"
-	cbPassword = ""
+	cbUsername = "Administrator"
+	cbPassword = "password"
 	jwtSecret  = []byte("UNSECURE_SECRET_TOKEN")
 )
 
@@ -528,12 +529,12 @@ func main() {
 
 	// Authenticate to the cluster using RBAC (Couchbase Server 5.0+)
 	globalCluster.Authenticate(gocb.PasswordAuthenticator{
-		"Administrator",
-		"password",
+		cbUsername,
+		cbPassword,
 	})
 
 	// Open the bucket
-	globalBucket, err = globalCluster.OpenBucket(cbBucket, cbPassword)
+	globalBucket, err = globalCluster.OpenBucket(cbBucket, "")
 	if err != nil {
 		panic(err)
 	}
