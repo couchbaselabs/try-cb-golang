@@ -484,7 +484,7 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 		))
 	}
 
-	q := gocb.NewSearchQuery("travel-search", qp).
+	q := gocb.NewSearchQuery("hotels", qp).
 		Limit(100)
 	rows, err := globalBucket.ExecuteSearchQuery(q)
 	if err != nil {
