@@ -14,16 +14,18 @@ import (
 
 	"github.com/couchbase/gocb"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"gopkg.in/couchbase/gocb.v1/cbft"
 )
 
 var (
-	cbConnStr  = "couchbase://localhost"
-	cbBucket   = "travel-sample"
-	cbUsername = "Administrator"
-	cbPassword = "password"
-	jwtSecret  = []byte("UNSECURE_SECRET_TOKEN")
+	cbConnStr    = "couchbase://localhost"
+	cbDataBucket = "travel-sample"
+	cbUserBucket = "travel-users"
+	cbUsername   = "Administrator"
+	cbPassword   = "password"
+	jwtSecret    = []byte("UNSECURE_SECRET_TOKEN")
 )
 
 var (
@@ -34,9 +36,12 @@ var (
 	ErrBadAuth       = errors.New("invalid auth token")
 )
 
-var globalCluster *gocb.Cluster = nil
-var globalBucket *gocb.Bucket = nil
-var globalCollection *gocb.Collection = nil
+var globalCluster *gocb.Cluster
+var globalBucket *gocb.Bucket
+var globalCollection *gocb.Collection
+var userBucket *gocb.Bucket
+var userCollection *gocb.Collection
+var flightCollection *gocb.Collection
 
 type jsonBookedFlight struct {
 	Name               string  `json:"name"`
@@ -49,9 +54,9 @@ type jsonBookedFlight struct {
 }
 
 type jsonUser struct {
-	Name     string             `json:"name"`
-	Password string             `json:"password"`
-	Flights  []jsonBookedFlight `json:"flights"`
+	Name     string   `json:"name"`
+	Password string   `json:"password"`
+	Flights  []string `json:"flights"`
 }
 
 type jsonFlight struct {
@@ -301,8 +306,8 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	spec := gocb.LookupInSpec{}
-	userKey := fmt.Sprintf("user::%s", reqData.User)
-	passRes, err := globalCollection.LookupIn(userKey, []gocb.LookupInOp{
+	userKey := reqData.User
+	passRes, err := userCollection.LookupIn(userKey, []gocb.LookupInOp{
 		spec.Get("password", nil),
 	}, nil)
 	if gocb.IsKeyNotFoundError(err) {
@@ -357,13 +362,13 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userKey := fmt.Sprintf("user::%s", reqData.User)
+	userKey := reqData.User
 	user := jsonUser{
 		Name:     reqData.User,
 		Password: reqData.Password,
 		Flights:  nil,
 	}
-	_, err := globalCollection.Insert(userKey, user, nil)
+	_, err := userCollection.Insert(userKey, user, nil)
 	if gocb.IsKeyExistsError(err) {
 		writeJsonFailure(w, 409, ErrUserExists)
 		return
@@ -398,18 +403,33 @@ func UserFlights(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userKey := fmt.Sprintf("user::%s", authUser.Name)
+	userKey := authUser.Name
 
-	var user jsonUser
-	res, err := globalCollection.Get(userKey, nil)
+	var flightIDs []string
+	spec := gocb.LookupInSpec{}
+	res, err := userCollection.LookupIn(userKey, []gocb.LookupInOp{
+		spec.Get("flights", nil),
+	}, nil)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
-	res.Content(&user)
+	res.ContentAt(0, &flightIDs)
 
-	respData.Data = user.Flights
+	var flight jsonBookedFlight
+	var flights []jsonBookedFlight
+	for _, flightID := range flightIDs {
+		res, err := flightCollection.Get(flightID, nil)
+		if err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+		res.Content(&flight)
+		flights = append(flights, flight)
+	}
+
+	respData.Data = flights
 
 	encodeRespOrFail(w, respData)
 }
@@ -439,9 +459,9 @@ func UserBookFlight(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userKey := fmt.Sprintf("user::%s", authUser.Name)
+	userKey := authUser.Name
 	var user jsonUser
-	res, err := globalCollection.Get(userKey, nil)
+	res, err := userCollection.Get(userKey, nil)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -452,11 +472,19 @@ func UserBookFlight(w http.ResponseWriter, req *http.Request) {
 	for _, flight := range reqData.Flights {
 		flight.BookedOn = time.Now().Format("01/02/2006")
 		respData.Data.Added = append(respData.Data.Added, flight)
-		user.Flights = append(user.Flights, flight)
+		flightID, err := uuid.NewRandom()
+		if err != nil {
+			writeJsonFailure(w, 500, err)
+		}
+		user.Flights = append(user.Flights, flightID.String())
+		_, err = flightCollection.Upsert(flightID.String(), flight, nil)
+		if err != nil {
+			writeJsonFailure(w, 500, err)
+		}
 	}
 
 	opts := gocb.ReplaceOptions{Cas: cas}
-	_, err = globalCollection.Replace(userKey, user, &opts)
+	_, err = userCollection.Replace(userKey, user, &opts)
 	if err != nil {
 		// We intentionally do not handle CAS mismatch, as if the users
 		//  account was already modified, they probably want to know.
@@ -550,10 +578,13 @@ func main() {
 	}
 
 	// Open the bucket
-	globalBucket = globalCluster.Bucket(cbBucket, nil)
+	globalBucket = globalCluster.Bucket(cbDataBucket, nil)
+	userBucket = globalCluster.Bucket(cbUserBucket, nil)
 
 	// Select the default collection
 	globalCollection = globalBucket.DefaultCollection(nil)
+	userCollection = userBucket.Collection("userData", "users", nil)
+	flightCollection = userBucket.Collection("userData", "flights", nil)
 
 	// Create a router for our server
 	r := mux.NewRouter()
