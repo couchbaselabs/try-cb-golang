@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -18,10 +19,10 @@ import (
 )
 
 var (
-	cbConnStr  = "couchbase://10.143.191.103"
+	cbConnStr  = "couchbase://localhost"
 	cbBucket   = "travel-sample"
-	cbUsername = "Danzibob"
-	cbPassword = "C0uchbase123"
+	cbUsername = "Administrator"
+	cbPassword = "password"
 	jwtSecret  = []byte("UNSECURE_SECRET_TOKEN")
 )
 
@@ -304,11 +305,11 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	passRes, err := globalCollection.LookupIn(userKey, []gocb.LookupInOp{
 		spec.Get("password", nil),
 	}, nil)
-	/*if err ==  {
+	if gocb.IsKeyNotFoundError(err) {
 		writeJsonFailure(w, 401, ErrUserNotFound)
 		return
-	} else */if err != nil {
-		fmt.Println(err)
+	} else if err != nil {
+		fmt.Println(gocb.ErrorCause(err))
 		writeJsonFailure(w, 500, err)
 		return
 	}
@@ -363,11 +364,11 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 		Flights:  nil,
 	}
 	_, err := globalCollection.Insert(userKey, user, nil)
-	/*if err == gocb.ErrKeyExists {
+	if gocb.IsKeyExistsError(err) {
 		writeJsonFailure(w, 409, ErrUserExists)
 		return
-	} else */if err != nil {
-		fmt.Println(err)
+	} else if err != nil {
+		fmt.Println(reflect.TypeOf(err))
 		writeJsonFailure(w, 500, err)
 		return
 	}
