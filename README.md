@@ -13,6 +13,7 @@ The steps below assume you are running a standalone couchbase instance running k
 later) and query services on the same server where the node application will also be running.
 
  1. Install a Couchbase Server, and start it.
+    * If you want to use Full-Text Search, set up an FTS index called `hotels` for all documents of type `hotel`
 
  2. Install Go 1.6+
 

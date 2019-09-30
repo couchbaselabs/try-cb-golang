@@ -499,7 +499,7 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 		))
 	}
 
-	q := gocb.SearchQuery{Name: "travel-search", Query: qp}
+	q := gocb.SearchQuery{Name: "hotels", Query: qp}
 	results, err := globalCluster.SearchQuery(q, &gocb.SearchQueryOptions{Limit: 100})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
