@@ -16,7 +16,6 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"gopkg.in/couchbase/gocb.v1/cbft"
 )
 
 var (
@@ -305,10 +304,9 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	if !decodeReqOrFail(w, req, &reqData) {
 		return
 	}
-	spec := gocb.LookupInSpec{}
-	userKey := reqData.User
-	passRes, err := userCollection.LookupIn(userKey, []gocb.LookupInOp{
-		spec.Get("password", nil),
+	userKey := fmt.Sprintf("user::%s", reqData.User)
+	passRes, err := globalCollection.LookupIn(userKey, []gocb.LookupInSpec{
+		gocb.GetSpec("password", nil),
 	}, nil)
 	if gocb.IsKeyNotFoundError(err) {
 		writeJsonFailure(w, 401, ErrUserNotFound)
@@ -406,9 +404,8 @@ func UserFlights(w http.ResponseWriter, req *http.Request) {
 	userKey := authUser.Name
 
 	var flightIDs []string
-	spec := gocb.LookupInSpec{}
-	res, err := userCollection.LookupIn(userKey, []gocb.LookupInOp{
-		spec.Get("flights", nil),
+	res, err := userCollection.LookupIn(userKey, []gocb.LookupInSpec{
+		gocb.GetSpec("flights", nil),
 	}, nil)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
@@ -521,30 +518,28 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if description != "" && description != "*" {
-		qp.And(cbft.NewDisjunctionQuery(
-			cbft.NewMatchPhraseQuery(description).Field("description"),
-			cbft.NewMatchPhraseQuery(description).Field("name"),
+		qp.And(gocb.NewDisjunctionQuery(
+			gocb.NewMatchPhraseQuery(description).Field("description"),
+			gocb.NewMatchPhraseQuery(description).Field("name"),
 		))
 	}
 
-	q := gocb.SearchQuery{Name: "hotels", Query: qp}
-	results, err := globalCluster.SearchQuery(q, &gocb.SearchQueryOptions{Limit: 100})
+	results, err := globalCluster.SearchQuery("hotels", qp, &gocb.SearchOptions{Limit: 100})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
-	spec := gocb.LookupInSpec{}
 	respData.Data = []jsonHotel{}
-	var hit gocb.SearchResultHit
+	var hit gocb.SearchRow
 	for results.Next(&hit) {
-		res, _ := globalCollection.LookupIn(hit.ID, []gocb.LookupInOp{
-			spec.Get("country", nil),
-			spec.Get("city", nil),
-			spec.Get("state", nil),
-			spec.Get("address", nil),
-			spec.Get("name", nil),
-			spec.Get("description", nil),
+		res, _ := globalCollection.LookupIn(hit.ID, []gocb.LookupInSpec{
+			gocb.GetSpec("country", nil),
+			gocb.GetSpec("city", nil),
+			gocb.GetSpec("state", nil),
+			gocb.GetSpec("address", nil),
+			gocb.GetSpec("name", nil),
+			gocb.GetSpec("description", nil),
 		}, nil)
 		// We ignore errors here since some hotels are missing various
 		//  pieces of data, but every key exists since it came from FTS.
@@ -581,10 +576,11 @@ func main() {
 	globalBucket = globalCluster.Bucket(cbDataBucket, nil)
 	userBucket = globalCluster.Bucket(cbUserBucket, nil)
 
-	// Select the default collection
-	globalCollection = globalBucket.DefaultCollection(nil)
-	userCollection = userBucket.Collection("userData", "users", nil)
-	flightCollection = userBucket.Collection("userData", "flights", nil)
+	// Select the required collections
+	globalCollection = globalBucket.DefaultCollection()
+	userDataScope := userBucket.Scope("userData")
+	userCollection = userDataScope.Collection("users")
+	flightCollection = userDataScope.Collection("flights")
 
 	// Create a router for our server
 	r := mux.NewRouter()
