@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/couchbase/gocb"
+	"github.com/couchbase/gocb/v2"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 )
