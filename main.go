@@ -304,8 +304,8 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	if !decodeReqOrFail(w, req, &reqData) {
 		return
 	}
-	userKey := fmt.Sprintf("user::%s", reqData.User)
-	passRes, err := globalCollection.LookupIn(userKey, []gocb.LookupInSpec{
+	userKey := reqData.User
+	passRes, err := userCollection.LookupIn(userKey, []gocb.LookupInSpec{
 		gocb.GetSpec("password", nil),
 	}, nil)
 	if gocb.IsKeyNotFoundError(err) {
