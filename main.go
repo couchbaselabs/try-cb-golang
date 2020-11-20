@@ -181,12 +181,16 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 	searchKey := req.FormValue("search")
 
 	var queryStr string
-	if len(searchKey) == 3 {
+	sameCase := (strings.ToUpper(searchKey) == searchKey || strings.ToLower(searchKey) == searchKey)
+	if sameCase && len(searchKey) == 3 {
+		// FAA code
 		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE faa='%s'", strings.ToUpper(searchKey))
-	} else if len(searchKey) == 4 && searchKey == strings.ToUpper(searchKey) {
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE icao ='%s'", searchKey)
+	} else if sameCase && len(searchKey) == 4 {
+		// ICAO code
+		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE icao ='%s'", strings.ToUpper(searchKey))
 	} else {
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE airportname like '%s%%'", searchKey)
+		// Airport name
+		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE LOWER(airportname) LIKE '%s%%'", strings.ToLower(searchKey))
 	}
 
 	respData.Context.Add(queryStr)
@@ -563,8 +567,8 @@ func main() {
 	// Connect to Couchbase
 	clusterOpts := gocb.ClusterOptions{
 		Authenticator: gocb.PasswordAuthenticator{
-			cbUsername,
-			cbPassword,
+			Username: cbUsername,
+			Password: cbPassword,
 		},
 	}
 	globalCluster, err = gocb.Connect(cbConnStr, clusterOpts)
