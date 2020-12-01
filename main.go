@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/couchbase/gocb/v2"
+	"github.com/couchbase/gocb/v2/search"
+	"github.com/couchbase/gocbcore/v8"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -202,9 +204,19 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 
 	respData.Data = []jsonAirport{}
 	var airport jsonAirport
-	for rows.Next(&airport) {
+	for rows.Next() {
+		if err = rows.Row(&airport); err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+
 		respData.Data = append(respData.Data, airport)
 		airport = jsonAirport{}
+	}
+
+	if err = rows.Close(); err != nil {
+		writeJsonFailure(w, 500, err)
+		return
 	}
 
 	encodeRespOrFail(w, respData)
@@ -245,20 +257,27 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 
 	var fromAirportFaa string
 	var toAirportFaa string
+	var faaList []string
 
 	var airportInfo struct {
 		Faa string `json:"faa"`
 	}
-	rows.Next(&airportInfo)
-	fromAirportFaa = airportInfo.Faa
-	rows.Next(&airportInfo)
-	toAirportFaa = airportInfo.Faa
+	for rows.Next() {
+		if err = rows.Row(&airportInfo); err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
 
-	err = rows.Close()
-	if err != nil {
+		faaList = append(faaList, airportInfo.Faa)
+	}
+
+	if err = rows.Close(); err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
+
+	fromAirportFaa = faaList[0]
+	toAirportFaa = faaList[1]
 
 	queryStr =
 		"SELECT a.name, s.flight, s.utc, r.sourceairport, r.destinationairport, r.equipment" +
@@ -279,11 +298,21 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 
 	respData.Data = []jsonFlight{}
 	var flight jsonFlight
-	for rows.Next(&flight) {
+	for rows.Next() {
+		if err = rows.Row(&flight); err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+
 		flight.FlightTime = int(math.Ceil(rand.Float64() * 8000))
 		flight.Price = math.Ceil(float64(flight.FlightTime)/8*100) / 100
 		respData.Data = append(respData.Data, flight)
 		flight = jsonFlight{}
+	}
+
+	if err = rows.Close(); err != nil {
+		writeJsonFailure(w, 500, err)
+		return
 	}
 
 	encodeRespOrFail(w, respData)
@@ -312,11 +341,11 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	passRes, err := userCollection.LookupIn(userKey, []gocb.LookupInSpec{
 		gocb.GetSpec("password", nil),
 	}, nil)
-	if gocb.IsKeyNotFoundError(err) {
+	if errors.Is(err, gocbcore.ErrDocumentNotFound) {
 		writeJsonFailure(w, 401, ErrUserNotFound)
 		return
 	} else if err != nil {
-		fmt.Println(gocb.ErrorCause(err))
+		fmt.Println(errors.Unwrap(err))
 		writeJsonFailure(w, 500, err)
 		return
 	}
@@ -371,7 +400,7 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 		Flights:  nil,
 	}
 	_, err := userCollection.Insert(userKey, user, nil)
-	if gocb.IsKeyExistsError(err) {
+	if errors.Is(err, gocbcore.ErrDocumentExists) {
 		writeJsonFailure(w, 409, ErrUserExists)
 		return
 	} else if err != nil {
@@ -509,22 +538,21 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 	description := reqVars["description"]
 	location := reqVars["location"]
 
-	//qp := cbft.NewConjunctionQuery(cbft.NewTermQuery("hotel").Field("type"))
-	qp := gocb.NewConjunctionQuery(gocb.NewTermQuery("hotel").Field("type"))
+	qp := search.NewConjunctionQuery(search.NewTermQuery("hotel").Field("type"))
 
 	if location != "" && location != "*" {
-		qp.And(gocb.NewDisjunctionQuery(
-			gocb.NewMatchPhraseQuery(location).Field("country"),
-			gocb.NewMatchPhraseQuery(location).Field("city"),
-			gocb.NewMatchPhraseQuery(location).Field("state"),
-			gocb.NewMatchPhraseQuery(location).Field("address"),
+		qp.And(search.NewDisjunctionQuery(
+			search.NewMatchPhraseQuery(location).Field("country"),
+			search.NewMatchPhraseQuery(location).Field("city"),
+			search.NewMatchPhraseQuery(location).Field("state"),
+			search.NewMatchPhraseQuery(location).Field("address"),
 		))
 	}
 
 	if description != "" && description != "*" {
-		qp.And(gocb.NewDisjunctionQuery(
-			gocb.NewMatchPhraseQuery(description).Field("description"),
-			gocb.NewMatchPhraseQuery(description).Field("name"),
+		qp.And(search.NewDisjunctionQuery(
+			search.NewMatchPhraseQuery(description).Field("description"),
+			search.NewMatchPhraseQuery(description).Field("name"),
 		))
 	}
 
@@ -536,7 +564,7 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 
 	respData.Data = []jsonHotel{}
 	var hit gocb.SearchRow
-	for results.Next(&hit) {
+	for results.Next() {
 		res, _ := globalCollection.LookupIn(hit.ID, []gocb.LookupInSpec{
 			gocb.GetSpec("country", nil),
 			gocb.GetSpec("city", nil),
@@ -577,8 +605,8 @@ func main() {
 	}
 
 	// Open the bucket
-	globalBucket = globalCluster.Bucket(cbDataBucket, nil)
-	userBucket = globalCluster.Bucket(cbUserBucket, nil)
+	globalBucket = globalCluster.Bucket(cbDataBucket)
+	userBucket = globalCluster.Bucket(cbUserBucket)
 
 	// Select the required collections
 	globalCollection = globalBucket.DefaultCollection()
