@@ -8,13 +8,11 @@ import (
 	"math/rand"
 	"net/http"
 	"reflect"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/couchbase/gocb/v2"
 	"github.com/couchbase/gocb/v2/search"
-	"github.com/couchbase/gocbcore/v8"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -181,22 +179,26 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 	var respData jsonAirportSearchResp
 
 	searchKey := req.FormValue("search")
+	queryParams := make([]interface{}, 1)
 
 	var queryStr string
 	sameCase := (strings.ToUpper(searchKey) == searchKey || strings.ToLower(searchKey) == searchKey)
 	if sameCase && len(searchKey) == 3 {
 		// FAA code
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE faa='%s'", strings.ToUpper(searchKey))
+		queryParams[0] = strings.ToUpper(searchKey)
+		queryStr = "SELECT airportname FROM `travel-sample` WHERE faa=$1"
 	} else if sameCase && len(searchKey) == 4 {
 		// ICAO code
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE icao ='%s'", strings.ToUpper(searchKey))
+		queryParams[0] = strings.ToUpper(searchKey)
+		queryStr = "SELECT airportname FROM `travel-sample` WHERE icao=$1"
 	} else {
 		// Airport name
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE LOWER(airportname) LIKE '%s%%'", strings.ToLower(searchKey))
+		queryParams[0] = strings.ToLower(searchKey)
+		queryStr = "SELECT airportname FROM `travel-sample` WHERE POSITION(LOWER(airportname), $1) = 0"
 	}
 
 	respData.Context.Add(queryStr)
-	rows, err := globalCluster.Query(queryStr, nil)
+	rows, err := globalCluster.Query(queryStr, &gocb.QueryOptions{PositionalParameters: queryParams})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -230,6 +232,7 @@ type jsonFlightSearchResp struct {
 
 func FlightSearch(w http.ResponseWriter, req *http.Request) {
 	var respData jsonFlightSearchResp
+	queryParams := make(map[string]interface{}, 1)
 
 	reqVars := mux.Vars(req)
 	leaveDate, err := time.Parse("01/02/2006", req.FormValue("leave"))
@@ -238,37 +241,32 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fromAirport := reqVars["from"]
-	toAirport := reqVars["to"]
-	dayOfWeek := int(leaveDate.Weekday())
-
-	var queryStr string
-	queryStr =
-		"SELECT faa FROM `travel-sample` WHERE airportname='" + fromAirport + "'" +
+	// Find aiport faa code for source and destination airports
+	queryParams["fromAirport"] = reqVars["from"]
+	queryParams["toAirport"] = reqVars["to"]
+	queryStr :=
+		"SELECT faa AS fromFaa FROM `travel-sample`" +
+			" WHERE airportname=$fromAirport" +
 			" UNION" +
-			" SELECT faa FROM `travel-sample` WHERE airportname='" + toAirport + "'"
+			" SELECT faa AS toFaa FROM `travel-sample`" +
+			" WHERE airportname=$toAirport;"
 
 	respData.Context.Add(queryStr)
-	rows, err := globalCluster.Query(queryStr, nil)
+	rows, err := globalCluster.Query(queryStr, &gocb.QueryOptions{NamedParameters: queryParams})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
-	var fromAirportFaa string
-	var toAirportFaa string
-	var faaList []string
-
 	var airportInfo struct {
-		Faa string `json:"faa"`
+		FromFaa string `json:"fromFaa"`
+		ToFaa   string `json:"toFaa"`
 	}
 	for rows.Next() {
 		if err = rows.Row(&airportInfo); err != nil {
 			writeJsonFailure(w, 500, err)
 			return
 		}
-
-		faaList = append(faaList, airportInfo.Faa)
 	}
 
 	if err = rows.Close(); err != nil {
@@ -276,21 +274,22 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fromAirportFaa = faaList[0]
-	toAirportFaa = faaList[1]
-
+	// Search for flights
+	queryParams["fromFaa"] = airportInfo.FromFaa
+	queryParams["toFaa"] = airportInfo.ToFaa
+	queryParams["dayOfWeek"] = int(leaveDate.Weekday())
 	queryStr =
 		"SELECT a.name, s.flight, s.utc, r.sourceairport, r.destinationairport, r.equipment" +
 			" FROM `travel-sample` AS r" +
 			" UNNEST r.schedule AS s" +
 			" JOIN `travel-sample` AS a ON KEYS r.airlineid" +
-			" WHERE r.sourceairport = '" + toAirportFaa + "'" +
-			" AND r.destinationairport = '" + fromAirportFaa + "'" +
-			" AND s.day=" + strconv.Itoa(dayOfWeek) +
+			" WHERE r.sourceairport=$fromFaa" +
+			" AND r.destinationairport=$toFaa" +
+			" AND s.day=$dayOfWeek" +
 			" ORDER BY a.name ASC;"
 
 	respData.Context.Add(queryStr)
-	rows, err = globalCluster.Query(queryStr, nil)
+	rows, err = globalCluster.Query(queryStr, &gocb.QueryOptions{NamedParameters: queryParams})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -341,7 +340,7 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	passRes, err := userCollection.LookupIn(userKey, []gocb.LookupInSpec{
 		gocb.GetSpec("password", nil),
 	}, nil)
-	if errors.Is(err, gocbcore.ErrDocumentNotFound) {
+	if errors.Is(err, gocb.ErrDocumentNotFound) {
 		writeJsonFailure(w, 401, ErrUserNotFound)
 		return
 	} else if err != nil {
@@ -400,7 +399,7 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 		Flights:  nil,
 	}
 	_, err := userCollection.Insert(userKey, user, nil)
-	if errors.Is(err, gocbcore.ErrDocumentExists) {
+	if errors.Is(err, gocb.ErrDocumentExists) {
 		writeJsonFailure(w, 409, ErrUserExists)
 		return
 	} else if err != nil {
@@ -563,9 +562,8 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 	}
 
 	respData.Data = []jsonHotel{}
-	var hit gocb.SearchRow
 	for results.Next() {
-		res, _ := globalCollection.LookupIn(hit.ID, []gocb.LookupInSpec{
+		res, _ := globalCollection.LookupIn(results.Row().ID, []gocb.LookupInSpec{
 			gocb.GetSpec("country", nil),
 			gocb.GetSpec("city", nil),
 			gocb.GetSpec("state", nil),
