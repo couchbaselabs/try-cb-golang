@@ -4,24 +4,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/couchbase/gocb"
-	"github.com/couchbase/gocb/cbft"
-	"github.com/dgrijalva/jwt-go"
-	"github.com/gorilla/mux"
 	"math"
 	"math/rand"
 	"net/http"
-	"strconv"
+	"reflect"
 	"strings"
 	"time"
+
+	"github.com/couchbase/gocb/v2"
+	"github.com/couchbase/gocb/v2/search"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 )
 
 var (
-	cbConnStr  = "couchbase://localhost"
-	cbBucket   = "travel-sample"
-	cbUsername = "Administrator"
-	cbPassword = "password"
-	jwtSecret  = []byte("UNSECURE_SECRET_TOKEN")
+	cbConnStr    = "couchbase://localhost"
+	cbDataBucket = "travel-sample"
+	cbUserBucket = "travel-users"
+	cbUsername   = "Administrator"
+	cbPassword   = "password"
+	jwtSecret    = []byte("UNSECURE_SECRET_TOKEN")
 )
 
 var (
@@ -32,8 +35,12 @@ var (
 	ErrBadAuth       = errors.New("invalid auth token")
 )
 
-var globalCluster *gocb.Cluster = nil
-var globalBucket *gocb.Bucket = nil
+var globalCluster *gocb.Cluster
+var globalBucket *gocb.Bucket
+var globalCollection *gocb.Collection
+var userBucket *gocb.Bucket
+var userCollection *gocb.Collection
+var flightCollection *gocb.Collection
 
 type jsonBookedFlight struct {
 	Name               string  `json:"name"`
@@ -46,9 +53,9 @@ type jsonBookedFlight struct {
 }
 
 type jsonUser struct {
-	Name     string             `json:"name"`
-	Password string             `json:"password"`
-	Flights  []jsonBookedFlight `json:"flights"`
+	Name     string   `json:"name"`
+	Password string   `json:"password"`
+	Flights  []string `json:"flights"`
 }
 
 type jsonFlight struct {
@@ -129,8 +136,12 @@ func decodeAuthUserOrFail(w http.ResponseWriter, req *http.Request, user *Authed
 	authHeader := req.Header.Get("Authorization")
 	authHeaderParts := strings.SplitN(authHeader, " ", 2)
 	if authHeaderParts[0] != "Bearer" {
-		writeJsonFailure(w, 400, ErrBadAuthHeader)
-		return false
+		authHeader = req.Header.Get("Authentication")
+		authHeaderParts = strings.SplitN(authHeader, " ", 2)
+		if authHeaderParts[0] != "Bearer" {
+			writeJsonFailure(w, 400, ErrBadAuthHeader)
+			return false
+		}
 	}
 
 	authToken := authHeaderParts[1]
@@ -168,19 +179,26 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 	var respData jsonAirportSearchResp
 
 	searchKey := req.FormValue("search")
+	queryParams := make([]interface{}, 1)
 
 	var queryStr string
-	if len(searchKey) == 3 {
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE faa='%s'", strings.ToUpper(searchKey))
-	} else if len(searchKey) == 4 && searchKey == strings.ToUpper(searchKey) {
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE icao ='%s'", searchKey)
+	sameCase := (strings.ToUpper(searchKey) == searchKey || strings.ToLower(searchKey) == searchKey)
+	if sameCase && len(searchKey) == 3 {
+		// FAA code
+		queryParams[0] = strings.ToUpper(searchKey)
+		queryStr = "SELECT airportname FROM `travel-sample` WHERE faa=$1"
+	} else if sameCase && len(searchKey) == 4 {
+		// ICAO code
+		queryParams[0] = strings.ToUpper(searchKey)
+		queryStr = "SELECT airportname FROM `travel-sample` WHERE icao=$1"
 	} else {
-		queryStr = fmt.Sprintf("SELECT airportname FROM `travel-sample` WHERE airportname like '%s%%'", searchKey)
+		// Airport name
+		queryParams[0] = strings.ToLower(searchKey)
+		queryStr = "SELECT airportname FROM `travel-sample` WHERE POSITION(LOWER(airportname), $1) = 0"
 	}
 
 	respData.Context.Add(queryStr)
-	q := gocb.NewN1qlQuery(queryStr)
-	rows, err := globalBucket.ExecuteN1qlQuery(q, nil)
+	rows, err := globalCluster.Query(queryStr, &gocb.QueryOptions{PositionalParameters: queryParams})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -188,9 +206,19 @@ func AirportSearch(w http.ResponseWriter, req *http.Request) {
 
 	respData.Data = []jsonAirport{}
 	var airport jsonAirport
-	for rows.Next(&airport) {
+	for rows.Next() {
+		if err = rows.Row(&airport); err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+
 		respData.Data = append(respData.Data, airport)
 		airport = jsonAirport{}
+	}
+
+	if err = rows.Close(); err != nil {
+		writeJsonFailure(w, 500, err)
+		return
 	}
 
 	encodeRespOrFail(w, respData)
@@ -204,6 +232,7 @@ type jsonFlightSearchResp struct {
 
 func FlightSearch(w http.ResponseWriter, req *http.Request) {
 	var respData jsonFlightSearchResp
+	queryParams := make(map[string]interface{}, 1)
 
 	reqVars := mux.Vars(req)
 	leaveDate, err := time.Parse("01/02/2006", req.FormValue("leave"))
@@ -212,54 +241,55 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	fromAirport := reqVars["from"]
-	toAirport := reqVars["to"]
-	dayOfWeek := int(leaveDate.Weekday())
-
-	var queryStr string
-	queryStr =
-		"SELECT faa FROM `travel-sample` WHERE airportname='" + fromAirport + "'" +
+	// Find aiport faa code for source and destination airports
+	queryParams["fromAirport"] = reqVars["from"]
+	queryParams["toAirport"] = reqVars["to"]
+	queryStr :=
+		"SELECT faa AS fromFaa FROM `travel-sample`" +
+			" WHERE airportname=$fromAirport" +
 			" UNION" +
-			" SELECT faa FROM `travel-sample` WHERE airportname='" + toAirport + "'"
+			" SELECT faa AS toFaa FROM `travel-sample`" +
+			" WHERE airportname=$toAirport;"
 
 	respData.Context.Add(queryStr)
-	q := gocb.NewN1qlQuery(queryStr)
-	rows, err := globalBucket.ExecuteN1qlQuery(q, nil)
+	rows, err := globalCluster.Query(queryStr, &gocb.QueryOptions{NamedParameters: queryParams})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
-
-	var fromAirportFaa string
-	var toAirportFaa string
 
 	var airportInfo struct {
-		Faa string `json:"faa"`
+		FromFaa string `json:"fromFaa"`
+		ToFaa   string `json:"toFaa"`
 	}
-	rows.Next(&airportInfo)
-	fromAirportFaa = airportInfo.Faa
-	rows.Next(&airportInfo)
-	toAirportFaa = airportInfo.Faa
+	for rows.Next() {
+		if err = rows.Row(&airportInfo); err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+	}
 
-	err = rows.Close()
-	if err != nil {
+	if err = rows.Close(); err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
+	// Search for flights
+	queryParams["fromFaa"] = airportInfo.FromFaa
+	queryParams["toFaa"] = airportInfo.ToFaa
+	queryParams["dayOfWeek"] = int(leaveDate.Weekday())
 	queryStr =
 		"SELECT a.name, s.flight, s.utc, r.sourceairport, r.destinationairport, r.equipment" +
 			" FROM `travel-sample` AS r" +
 			" UNNEST r.schedule AS s" +
 			" JOIN `travel-sample` AS a ON KEYS r.airlineid" +
-			" WHERE r.sourceairport = '" + toAirportFaa + "'" +
-			" AND r.destinationairport = '" + fromAirportFaa + "'" +
-			" AND s.day=" + strconv.Itoa(dayOfWeek) +
+			" WHERE r.sourceairport=$fromFaa" +
+			" AND r.destinationairport=$toFaa" +
+			" AND s.day=$dayOfWeek" +
 			" ORDER BY a.name ASC;"
 
 	respData.Context.Add(queryStr)
-	q = gocb.NewN1qlQuery(queryStr)
-	rows, err = globalBucket.ExecuteN1qlQuery(q, nil)
+	rows, err = globalCluster.Query(queryStr, &gocb.QueryOptions{NamedParameters: queryParams})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -267,11 +297,21 @@ func FlightSearch(w http.ResponseWriter, req *http.Request) {
 
 	respData.Data = []jsonFlight{}
 	var flight jsonFlight
-	for rows.Next(&flight) {
+	for rows.Next() {
+		if err = rows.Row(&flight); err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+
 		flight.FlightTime = int(math.Ceil(rand.Float64() * 8000))
 		flight.Price = math.Ceil(float64(flight.FlightTime)/8*100) / 100
 		respData.Data = append(respData.Data, flight)
 		flight = jsonFlight{}
+	}
+
+	if err = rows.Close(); err != nil {
+		writeJsonFailure(w, 500, err)
+		return
 	}
 
 	encodeRespOrFail(w, respData)
@@ -296,19 +336,21 @@ func UserLogin(w http.ResponseWriter, req *http.Request) {
 	if !decodeReqOrFail(w, req, &reqData) {
 		return
 	}
-
-	userKey := fmt.Sprintf("user::%s", reqData.User)
-	passRes, err := globalBucket.LookupIn(userKey).Get("password").Execute()
-	if err == gocb.ErrKeyExists {
+	userKey := reqData.User
+	passRes, err := userCollection.LookupIn(userKey, []gocb.LookupInSpec{
+		gocb.GetSpec("password", nil),
+	}, nil)
+	if errors.Is(err, gocb.ErrDocumentNotFound) {
 		writeJsonFailure(w, 401, ErrUserNotFound)
 		return
 	} else if err != nil {
+		fmt.Println(errors.Unwrap(err))
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
 	var password string
-	err = passRes.Content("password", &password)
+	err = passRes.ContentAt(0, &password)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
@@ -350,17 +392,18 @@ func UserSignup(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userKey := fmt.Sprintf("user::%s", reqData.User)
+	userKey := reqData.User
 	user := jsonUser{
 		Name:     reqData.User,
 		Password: reqData.Password,
 		Flights:  nil,
 	}
-	_, err := globalBucket.Insert(userKey, user, 0)
-	if err == gocb.ErrKeyExists {
+	_, err := userCollection.Insert(userKey, user, nil)
+	if errors.Is(err, gocb.ErrDocumentExists) {
 		writeJsonFailure(w, 409, ErrUserExists)
 		return
 	} else if err != nil {
+		fmt.Println(reflect.TypeOf(err))
 		writeJsonFailure(w, 500, err)
 		return
 	}
@@ -390,15 +433,32 @@ func UserFlights(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userKey := fmt.Sprintf("user::%s", authUser.Name)
-	var user jsonUser
-	_, err := globalBucket.Get(userKey, &user)
+	userKey := authUser.Name
+
+	var flightIDs []string
+	res, err := userCollection.LookupIn(userKey, []gocb.LookupInSpec{
+		gocb.GetSpec("flights", nil),
+	}, nil)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
-	respData.Data = user.Flights
+	res.ContentAt(0, &flightIDs)
+
+	var flight jsonBookedFlight
+	var flights []jsonBookedFlight
+	for _, flightID := range flightIDs {
+		res, err := flightCollection.Get(flightID, nil)
+		if err != nil {
+			writeJsonFailure(w, 500, err)
+			return
+		}
+		res.Content(&flight)
+		flights = append(flights, flight)
+	}
+
+	respData.Data = flights
 
 	encodeRespOrFail(w, respData)
 }
@@ -428,21 +488,32 @@ func UserBookFlight(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	userKey := fmt.Sprintf("user::%s", authUser.Name)
+	userKey := authUser.Name
 	var user jsonUser
-	cas, err := globalBucket.Get(userKey, &user)
+	res, err := userCollection.Get(userKey, nil)
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
+	cas := res.Cas()
+	res.Content(&user)
 
 	for _, flight := range reqData.Flights {
 		flight.BookedOn = time.Now().Format("01/02/2006")
 		respData.Data.Added = append(respData.Data.Added, flight)
-		user.Flights = append(user.Flights, flight)
+		flightID, err := uuid.NewRandom()
+		if err != nil {
+			writeJsonFailure(w, 500, err)
+		}
+		user.Flights = append(user.Flights, flightID.String())
+		_, err = flightCollection.Upsert(flightID.String(), flight, nil)
+		if err != nil {
+			writeJsonFailure(w, 500, err)
+		}
 	}
 
-	_, err = globalBucket.Replace(userKey, user, cas, 0)
+	opts := gocb.ReplaceOptions{Cas: cas}
+	_, err = userCollection.Replace(userKey, user, &opts)
 	if err != nil {
 		// We intentionally do not handle CAS mismatch, as if the users
 		//  account was already modified, they probably want to know.
@@ -466,52 +537,50 @@ func HotelSearch(w http.ResponseWriter, req *http.Request) {
 	description := reqVars["description"]
 	location := reqVars["location"]
 
-	qp := cbft.NewConjunctionQuery(cbft.NewTermQuery("hotel").Field("type"))
+	qp := search.NewConjunctionQuery(search.NewTermQuery("hotel").Field("type"))
 
 	if location != "" && location != "*" {
-		qp.And(cbft.NewDisjunctionQuery(
-			cbft.NewMatchPhraseQuery(location).Field("country"),
-			cbft.NewMatchPhraseQuery(location).Field("city"),
-			cbft.NewMatchPhraseQuery(location).Field("state"),
-			cbft.NewMatchPhraseQuery(location).Field("address"),
+		qp.And(search.NewDisjunctionQuery(
+			search.NewMatchPhraseQuery(location).Field("country"),
+			search.NewMatchPhraseQuery(location).Field("city"),
+			search.NewMatchPhraseQuery(location).Field("state"),
+			search.NewMatchPhraseQuery(location).Field("address"),
 		))
 	}
 
 	if description != "" && description != "*" {
-		qp.And(cbft.NewDisjunctionQuery(
-			cbft.NewMatchPhraseQuery(description).Field("description"),
-			cbft.NewMatchPhraseQuery(description).Field("name"),
+		qp.And(search.NewDisjunctionQuery(
+			search.NewMatchPhraseQuery(description).Field("description"),
+			search.NewMatchPhraseQuery(description).Field("name"),
 		))
 	}
 
-	q := gocb.NewSearchQuery("travel-search", qp).
-		Limit(100)
-	rows, err := globalBucket.ExecuteSearchQuery(q)
+	results, err := globalCluster.SearchQuery("hotels", qp, &gocb.SearchOptions{Limit: 100})
 	if err != nil {
 		writeJsonFailure(w, 500, err)
 		return
 	}
 
 	respData.Data = []jsonHotel{}
-	for _, hit := range rows.Hits() {
-		res, _ := globalBucket.LookupIn(hit.Id).
-			Get("country").
-			Get("city").
-			Get("state").
-			Get("address").
-			Get("name").
-			Get("description").
-			Execute()
+	for results.Next() {
+		res, _ := globalCollection.LookupIn(results.Row().ID, []gocb.LookupInSpec{
+			gocb.GetSpec("country", nil),
+			gocb.GetSpec("city", nil),
+			gocb.GetSpec("state", nil),
+			gocb.GetSpec("address", nil),
+			gocb.GetSpec("name", nil),
+			gocb.GetSpec("description", nil),
+		}, nil)
 		// We ignore errors here since some hotels are missing various
 		//  pieces of data, but every key exists since it came from FTS.
 
 		var hotel jsonHotel
-		res.Content("country", &hotel.Country)
-		res.Content("city", &hotel.City)
-		res.Content("state", &hotel.State)
-		res.Content("address", &hotel.Address)
-		res.Content("name", &hotel.Name)
-		res.Content("description", &hotel.Description)
+		res.ContentAt(0, &hotel.Country)
+		res.ContentAt(1, &hotel.City)
+		res.ContentAt(2, &hotel.State)
+		res.ContentAt(3, &hotel.Address)
+		res.ContentAt(4, &hotel.Name)
+		res.ContentAt(5, &hotel.Description)
 		respData.Data = append(respData.Data, hotel)
 	}
 
@@ -522,22 +591,26 @@ func main() {
 	var err error
 
 	// Connect to Couchbase
-	globalCluster, err = gocb.Connect(cbConnStr)
+	clusterOpts := gocb.ClusterOptions{
+		Authenticator: gocb.PasswordAuthenticator{
+			Username: cbUsername,
+			Password: cbPassword,
+		},
+	}
+	globalCluster, err = gocb.Connect(cbConnStr, clusterOpts)
 	if err != nil {
 		panic(err)
 	}
-
-	// Authenticate to the cluster using RBAC (Couchbase Server 5.0+)
-	globalCluster.Authenticate(gocb.PasswordAuthenticator{
-		cbUsername,
-		cbPassword,
-	})
 
 	// Open the bucket
-	globalBucket, err = globalCluster.OpenBucket(cbBucket, "")
-	if err != nil {
-		panic(err)
-	}
+	globalBucket = globalCluster.Bucket(cbDataBucket)
+	userBucket = globalCluster.Bucket(cbUserBucket)
+
+	// Select the required collections
+	globalCollection = globalBucket.DefaultCollection()
+	userDataScope := userBucket.Scope("userData")
+	userCollection = userDataScope.Collection("users")
+	flightCollection = userDataScope.Collection("flights")
 
 	// Create a router for our server
 	r := mux.NewRouter()
