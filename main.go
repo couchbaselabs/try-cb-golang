@@ -608,13 +608,13 @@ func (app *TravelSampleApp) HotelSearch(w http.ResponseWriter, req *http.Request
 		}
 		respData.Data = append(respData.Data, hotel)
 	}
-	b, err := json.Marshal(qp)
+	queryBytes, err := json.Marshal(qp)
 	if err != nil {
 		app.logger.Printf("Failed to marshal search query: %s", err)
 	}
 	if len(respData.Data) == 0 {
-		if len(b) > 0 {
-			respData.Context.Add(fmt.Sprintf("FTS search - scoped to: inventory.hotel (no results)\n%s", string(b)))
+		if len(queryBytes) > 0 {
+			respData.Context.Add(fmt.Sprintf("FTS search - scoped to: inventory.hotel (no results)\n%s", string(queryBytes)))
 		} else {
 			respData.Context.Add("FTS search - scoped to: inventory.hotel (no results)\n")
 		}
@@ -622,7 +622,7 @@ func (app *TravelSampleApp) HotelSearch(w http.ResponseWriter, req *http.Request
 		return
 	}
 	respData.Context.Add(fmt.Sprintf("FTS search - scoped to: inventory.hotel within fields %s\n%s",
-		strings.Join(hotelCols, ","), string(b)))
+		strings.Join(hotelCols, ","), string(queryBytes)))
 
 	encodeRespOrFail(w, respData)
 }
