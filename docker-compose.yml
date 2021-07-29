@@ -19,7 +19,7 @@ services:
       - backend
 
   db:
-    image: build-docker.couchbase.com:443/couchbase/server-internal:7.0.0-5247
+    image: couchbase/server-sandbox:7.0.0
     ports:
       - "8091-8095:8091-8095"
       - "9102:9102"
@@ -32,4 +32,4 @@ services:
       - "8092"
       - "8093"
       - "8094"
-    container_name: couchbase-sandbox-7.0.0-beta
+    container_name: couchbase-sandbox-7.0.0
