@@ -5,13 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/couchbase/gocb/v2"
-	"github.com/couchbase/gocb/v2/search"
-	"github.com/golang-jwt/jwt/v4"
-	"github.com/google/uuid"
-	"github.com/gorilla/handlers"
-	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 	"math"
 	"math/rand"
 	"net/http"
@@ -19,6 +12,14 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+
+	"github.com/couchbase/gocb/v2"
+	"github.com/couchbase/gocb/v2/search"
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/google/uuid"
+	"github.com/gorilla/handlers"
+	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -262,6 +263,7 @@ func (app *TravelSampleApp) FlightSearch(w http.ResponseWriter, req *http.Reques
 			" ORDER BY a.name ASC;"
 
 	var respData jsonFlightSearchResp
+	respData.Context.Add("N1QL query - scoped to inventory: ")
 	respData.Context.Add(faaQueryStr)
 	respData.Context.Add(queryStr)
 	rows, err = app.cluster.Query(queryStr, &gocb.QueryOptions{NamedParameters: queryParams})
@@ -308,7 +310,8 @@ func (app *TravelSampleApp) UserLogin(w http.ResponseWriter, req *http.Request) 
 		return
 	}
 
-	reqUser := strings.ToLower(reqData.User)
+	reqUser := reqData.User
+	userKey := strings.ToLower(reqUser)
 	reqPass := reqData.Password
 
 	vars := mux.Vars(req)
@@ -316,7 +319,7 @@ func (app *TravelSampleApp) UserLogin(w http.ResponseWriter, req *http.Request) 
 	scope := app.bucket.Scope(tenant)
 	users := scope.Collection("users")
 
-	result, err := users.LookupIn(reqUser, []gocb.LookupInSpec{
+	result, err := users.LookupIn(userKey, []gocb.LookupInSpec{
 		gocb.GetSpec("password", nil),
 	}, nil)
 	if errors.Is(err, gocb.ErrDocumentNotFound) {
@@ -351,7 +354,7 @@ func (app *TravelSampleApp) UserLogin(w http.ResponseWriter, req *http.Request) 
 	respData := jsonUserLoginResp{
 		Data: jsonUserDataResp{Token: token},
 	}
-	respData.Context.Add(fmt.Sprintf("KV lookupin - scoped to %s.users: for password field in document %s",
+	respData.Context.Add(fmt.Sprintf("KV get - scoped to %s.users: for password field in document %s",
 		tenant, reqUser))
 
 	encodeRespOrFail(w, respData)
@@ -378,7 +381,9 @@ func (app *TravelSampleApp) UserSignup(w http.ResponseWriter, req *http.Request)
 	scope := app.bucket.Scope(tenant)
 	users := scope.Collection("users")
 
-	_, err := users.Insert(reqUser, user, nil)
+	userKey := strings.ToLower(reqUser)
+
+	_, err := users.Insert(userKey, user, nil)
 	if errors.Is(err, gocb.ErrDocumentExists) {
 		writeJsonFailure(w, 409, ErrUserExists)
 		return
@@ -400,6 +405,7 @@ func (app *TravelSampleApp) UserSignup(w http.ResponseWriter, req *http.Request)
 	}
 	respData.Context.Add(fmt.Sprintf("KV insert - scoped to %s.users: document %s", tenant, reqUser))
 
+	w.WriteHeader(201)
 	encodeRespOrFail(w, respData)
 }
 
@@ -538,7 +544,7 @@ func (app *TravelSampleApp) UserBookFlight(w http.ResponseWriter, req *http.Requ
 	for _, flight := range reqData.Flights {
 		respData.Data.Added = append(respData.Data.Added, flight)
 	}
-	respData.Context.Add(fmt.Sprintf("KV MutateIn - scoped to %s.users: for bookings subdocument field in document %s",
+	respData.Context.Add(fmt.Sprintf("KV update - scoped to %s.users: for bookings subdocument field in document %s",
 		tenant, userKey))
 
 	encodeRespOrFail(w, respData)
