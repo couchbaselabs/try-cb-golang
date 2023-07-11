@@ -23,6 +23,7 @@ import (
 )
 
 var (
+	allowedAuthHeaders     = []string{"Authentication", "Authorization"}
 	defaultCBHost          = "db"
 	defaultCBScheme        = "couchbases://" // Set to couchbase:// if using Couchbase Server Community Edition
 	travelSampleBucketName = "travel-sample"
@@ -93,19 +94,29 @@ type authedUser struct {
 	Name string
 }
 
-func decodeAuthUserOrFail(w http.ResponseWriter, req *http.Request, user *authedUser) bool {
-	authHeader := req.Header.Get("Authorization")
-	authHeaderParts := strings.SplitN(authHeader, " ", 2)
-	if authHeaderParts[0] != "Bearer" {
-		authHeader = req.Header.Get("Authentication")
-		authHeaderParts = strings.SplitN(authHeader, " ", 2)
-		if authHeaderParts[0] != "Bearer" {
-			writeJsonFailure(w, 400, ErrBadAuthHeader)
-			return false
+func getAuthToken(req http.Request) (string, error) {
+	for _, allowedAuthHeader := range allowedAuthHeaders {
+		firstHeaderValue := req.Header.Get(allowedAuthHeader)
+		numOfParts := 2
+		authHeaderParts := strings.SplitN(firstHeaderValue, " ", numOfParts)
+
+		if authHeaderParts[0] != "Bearer" || len(authHeaderParts) != numOfParts {
+			continue
 		}
+
+		return authHeaderParts[1], nil
 	}
 
-	authToken := authHeaderParts[1]
+	return "", ErrBadAuth
+}
+
+func decodeAuthUserOrFail(w http.ResponseWriter, req *http.Request, user *authedUser) bool {
+	authToken, err := getAuthToken(*req)
+	if err != nil {
+		writeJsonFailure(w, 401, err)
+		return false
+	}
+
 	token, err := jwt.Parse(authToken, func(token *jwt.Token) (interface{}, error) {
 		// Don't forget to validate the alg is what you expect:
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -115,13 +126,13 @@ func decodeAuthUserOrFail(w http.ResponseWriter, req *http.Request, user *authed
 		return jwtSecret, nil
 	})
 	if err != nil {
-		writeJsonFailure(w, 400, ErrBadAuthHeader)
+		writeJsonFailure(w, 401, ErrBadAuth)
 		return false
 	}
 
 	authUser := token.Claims.(jwt.MapClaims)["user"].(string)
 	if authUser == "" {
-		writeJsonFailure(w, 400, ErrBadAuth)
+		writeJsonFailure(w, 401, ErrBadAuth)
 		return false
 	}
 
@@ -183,8 +194,10 @@ func (app *TravelSampleApp) AirportSearch(w http.ResponseWriter, req *http.Reque
 }
 
 // FlightSearch performs two N1Ql queries:
-//    the first query finds the airport faa codes for the two airport names given
-//    the second query finds the flights available between the two airport codes for the data provided
+//
+//	the first query finds the airport faa codes for the two airport names given
+//	the second query finds the flights available between the two airport codes for the data provided
+//
 // GET /api/flightPaths/{from}/{to}?leave=mm/dd/YYYY
 func (app *TravelSampleApp) FlightSearch(w http.ResponseWriter, req *http.Request) {
 	leaveDate, err := time.Parse("01/02/2006", req.FormValue("leave"))
@@ -410,8 +423,10 @@ func (app *TravelSampleApp) UserSignup(w http.ResponseWriter, req *http.Request)
 }
 
 // UserFlights performs two KV operations to fetch all flight bookings for a user.
-//    the first of the KV operations is a LookupIn on the bookings field of the user document
-//    the second KV operation performs a Get to fetch the flight information for each of the user's bookings
+//
+//	the first of the KV operations is a LookupIn on the bookings field of the user document
+//	the second KV operation performs a Get to fetch the flight information for each of the user's bookings
+//
 // GET /api/tenants/{tenant}/user/{username}/flights
 func (app *TravelSampleApp) UserFlights(w http.ResponseWriter, req *http.Request) {
 	var authUser authedUser
@@ -490,9 +505,11 @@ func (app *TravelSampleApp) UserFlights(w http.ResponseWriter, req *http.Request
 }
 
 // UserBookFlight performs two KV operations to create a flight booking for a user.
-//    the first operation performs an upsert to create a document for the flight
-//    the second operation performs a mutatein on the user document to add the document ID for the flight to the users
-//        bookings
+//
+//	the first operation performs an upsert to create a document for the flight
+//	the second operation performs a mutatein on the user document to add the document ID for the flight to the users
+//	    bookings
+//
 // POST  /api/tenants/{tenant}/user/{username}/flights
 func (app *TravelSampleApp) UserBookFlight(w http.ResponseWriter, req *http.Request) {
 	var authUser authedUser

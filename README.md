@@ -25,7 +25,7 @@ You will need [Docker](https://docs.docker.com/get-docker/) installed on your ma
 
 To launch the full application, simply run this command from a terminal:
 
-    docker-compose up
+    docker compose up
 
 > **_NOTE:_** You may need more than the default RAM to run the images.
 We have tested the travel-sample apps with 4.5 GB RAM configured in Docker's Preferences... -> Resources -> Memory.
@@ -36,7 +36,7 @@ This will start the Go backend, Couchbase Server 7.0.0 and the Vue frontend app.
 You can access the backend API on http://localhost:8080/, the UI on
 http://localhost:8081/ and Couchbase Server at http://localhost:8091/
 
-    ❯ docker-compose up
+    ❯ docker compose up
     Docker Compose is now in the Docker CLI, try `docker compose up`
 
     Creating network "try-cb-nodejs_default" with the default driver
@@ -88,7 +88,7 @@ You should then be able to browse the UI, search for US airports and get flight
 route information.
 
 To end the application press <kbd>Control</kbd>+<kbd>C</kbd> in the terminal
-and wait for docker-compose to gracefully stop your containers.
+and wait for docker compose to gracefully stop your containers.
 
 
 ## Mix and match services
@@ -121,7 +121,7 @@ bucket setup.
 
 With a running Couchbase Server, you can pass the database details in:
 
-    CB_HOST=10.144.211.101 CB_USER=Administrator CB_PASS=password docker-compose -f mix-and-match.yml up backend frontend
+    CB_HOST=10.144.211.101 CB_USER=Administrator CB_PASS=password docker compose -f mix-and-match.yml up backend frontend
 
 The Docker image will run the same checks as usual, and also create the
 `hotels-index` if it does not already exist.
@@ -147,7 +147,7 @@ The first time you run against a new database image, you may want to use the pro
 For example, using the Docker image provided:
 
 
-    docker-compose -f mix-and-match.yml up db
+    docker compose -f mix-and-match.yml up db
 
     export CB_HOST=localhost
     ./wait-for-couchbase.sh echo "Couchbase is ready!"
@@ -166,7 +166,7 @@ or:
 Finally, if you want to see how the sample frontend Vue application works with your changes,
 run it with:
 
-    docker-compose -f mix-and-match.yml up frontend
+    docker compose -f mix-and-match.yml up frontend
 
 
 ### Running the front-end manually
@@ -186,7 +186,7 @@ We've integrated Swagger/OpenApi version 3 documentation which can be accessed o
 To further ensure that every app conforms to the API, we have a [test suite][try-cb-test], which you can simply run with the command:
 
 ```
-docker-compose --profile test up test
+docker compose --profile test up test
 ```
 
 If you are running locally though, with a view to extending or modifying the travel-sample app, you will likely want to be able to make changes to both the code and the tests in parallel.
